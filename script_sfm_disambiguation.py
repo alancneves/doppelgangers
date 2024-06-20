@@ -177,7 +177,7 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
     loftr_matches_path = os.path.join(args.output_path, 'loftr_match')
     os.makedirs(loftr_matches_path, exist_ok=True)
     pair_path = create_image_pair_list(args.database_path, args.output_path)
-    save_loftr_matches(args.input_image_path, pair_path, args.output_path)
+    save_loftr_matches(args.input_image_path, pair_path, args.output_path, cfg)
 
     # edit config file with corresponding data path
     cfg.data.image_dir = args.input_image_path

@@ -6,6 +6,7 @@ import tqdm
 from PIL import Image, ImageOps
 
 from ..third_party.loftr import LoFTR, default_cfg
+from ..datasets.loftr_dataset import LoftrDataset
 
 def get_resized_wh(w, h, resize=None):
     if resize is not None:  # resize the longer edge
@@ -42,18 +43,18 @@ def read_image(img_pth, img_size, df, padding):
 
     if padding:  # padding
         pad_to = max(h_new, w_new)    
-        mask = np.zeros((1,pad_to, pad_to), dtype=bool)
-        mask[:,:h_new,:w_new] = True
-        mask = mask[:,::8,::8]
+        mask = np.zeros((pad_to, pad_to), dtype=bool)
+        mask[:h_new,:w_new] = True
+        mask = mask[::8,::8]
     
     image = cv2.resize(img_raw, (w_new, h_new))
-    pad_image = np.zeros((1,1, pad_to, pad_to), dtype=np.float32)
-    pad_image[0,0,:h_new,:w_new]=image/255.
+    pad_image = np.zeros((1, pad_to, pad_to), dtype=np.float32)
+    pad_image[0,:h_new,:w_new]=image/255.
 
     return pad_image, mask
 
 
-def save_loftr_matches(data_path, pair_path, output_path, model_weight_path="weights/outdoor_ds.ckpt"):
+def save_loftr_matches(data_path, pair_path, output_path, cfg, model_weight_path="weights/outdoor_ds.ckpt"):
     # The default config uses dual-softmax.
     # The outdoor and indoor models share the same config.
     # You can change the default values like thr and coarse_match_type.
@@ -61,34 +62,27 @@ def save_loftr_matches(data_path, pair_path, output_path, model_weight_path="wei
     matcher.load_state_dict(torch.load(model_weight_path)['state_dict'])
     matcher = matcher.eval().cuda()
 
-    pairs_info = np.load(pair_path, allow_pickle=True)
+    # initial dataset
     img_size = 1024
-    df = 8
-    padding = True
+    te_dataset = LoftrDataset(image_dir=data_path, pair_path=pair_path, img_size=img_size)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=te_dataset, batch_size=cfg.data.test.batch_size,
+        shuffle=False, num_workers=cfg.data.num_workers, drop_last=False
+    )
 
-    for idx in tqdm.tqdm(range(pairs_info.shape[0])):
-        output_dir = osp.join(output_path, f'loftr_match/{idx}.npy')
-        if osp.exists(output_dir):
-            continue
-        name0, name1, _, _, _ = pairs_info[idx]
-
-        img0_pth = osp.join(data_path, name0)
-        img1_pth = osp.join(data_path, name1)
-        img0_raw, mask0 = read_image(img0_pth, img_size, df, padding)
-        img1_raw, mask1 = read_image(img1_pth, img_size, df, padding)        
-        img0 = torch.from_numpy(img0_raw).cuda()
-        img1 = torch.from_numpy(img1_raw).cuda()
-        mask0 = torch.from_numpy(mask0).cuda()
-        mask1 = torch.from_numpy(mask1).cuda()
-        batch = {'image0': img0, 'image1': img1, 'mask0': mask0, 'mask1':mask1}
-
-        # Inference with LoFTR and get prediction
-        with torch.no_grad():
+    # Inference with LoFTR and get prediction
+    with torch.no_grad():
+        for batch in tqdm.tqdm(test_loader):
+            batch = {k:v.cuda() for k,v in batch.items()}
             matcher(batch)
-            mkpts0 = batch['mkpts0_f'].cpu().numpy()
-            mkpts1 = batch['mkpts1_f'].cpu().numpy()
-            mconf = batch['mconf'].cpu().numpy()
-
-            np.save(output_dir, {"kpt0": mkpts0, "kpt1": mkpts1, "conf": mconf})
+            bs = batch['image0'].shape[0]
+            for b_id in range(bs):
+                idx = batch['idx'][b_id].cpu().numpy()
+                mask = batch['m_bids'] == b_id
+                output_dir = osp.join(output_path, f'loftr_match/{idx}.npy')
+                mkpts0 = batch['mkpts0_f'][mask].cpu().numpy()
+                mkpts1 = batch['mkpts1_f'][mask].cpu().numpy()
+                mconf = batch['mconf'][mask].cpu().numpy()
+                np.save(output_dir, {"kpt0": mkpts0, "kpt1": mkpts1, "conf": mconf})
 
 
