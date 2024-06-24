@@ -3,8 +3,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from torch.utils.data.distributed import DistributedSampler
 import cv2
-from ..utils.dataset import read_loftr_matches
+from utils.dataset import read_loftr_matches
 
 class DoppelgangersDataset(Dataset):
     def __init__(self,
@@ -27,8 +28,6 @@ class DoppelgangersDataset(Dataset):
         self.image_dir = image_dir    
         self.loftr_match_dir = loftr_match_dir    
         self.pairs_info = np.load(pair_path)
-
-        print('loading images')
         self.img_size = img_size
 
         
@@ -58,6 +57,7 @@ class DoppelgangersDataset(Dataset):
         image = read_loftr_matches(img_name0, img_name1, self.img_size, 8, True, keypoints0, keypoints1, matches, warp=True, conf=conf)
         
         data = {
+            'idx': idx,
             'image': image,  # (4, h, w)
             'gt': int(label)
         }
@@ -84,10 +84,18 @@ def get_data_loaders(cfg):
     test_loader = torch.utils.data.DataLoader(
         dataset=te_dataset, batch_size=cfg.test.batch_size,
         shuffle=False, num_workers=cfg.num_workers, drop_last=False,
-        worker_init_fn=init_np_seed)
+        worker_init_fn=init_np_seed
+    )
+    test_loader_ddp = torch.utils.data.DataLoader(
+        dataset=te_dataset, batch_size=cfg.test.batch_size,
+        shuffle=False, num_workers=cfg.num_workers, drop_last=False,
+        worker_init_fn=init_np_seed,
+        sampler=DistributedSampler(te_dataset)
+    )
 
     loaders = {
         "test_loader": test_loader,
+        "test_loader_ddp": test_loader_ddp,
     }
     return loaders
 

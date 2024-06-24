@@ -95,9 +95,5 @@ class LoftrDataset(Dataset):
 
         return pad_image, mask
 
-
-
-
-
 if __name__ == "__main__":
     pass

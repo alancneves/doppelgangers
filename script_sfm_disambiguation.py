@@ -9,7 +9,6 @@ import tqdm
 import numpy as np
 
 from doppelgangers.utils.process_database import create_image_pair_list, remove_doppelgangers
-from doppelgangers.utils.loftr_matches import save_loftr_matches
 from doppelgangers.utils.process_database import remove_doppelgangers
 
 
@@ -111,112 +110,79 @@ def colmap_runner(args):
     os.system(' '.join(command))
 
 
-def doppelgangers_classifier(gpu, ngpus_per_node, cfg, args):
-        # basic setup
-    cudnn.benchmark = True
-    multi_gpu = False
-    strict = True
-
-    # initial dataset
-    data_lib = importlib.import_module(cfg.data.type)
-    loaders = data_lib.get_data_loaders(cfg.data)
-    test_loader = loaders['test_loader']
-
-    # initial model
-    decoder_lib = importlib.import_module(cfg.models.decoder.type)
-    decoder = decoder_lib.decoder(cfg.models.decoder)
-    decoder = decoder.cuda()
-
-    # load pretrained model
-    ckpt = torch.load(args.pretrained)
-    import copy
-    new_ckpt = copy.deepcopy(ckpt['dec'])
-    if not multi_gpu:
-        for key, value in ckpt['dec'].items():
-            if 'module.' in key:
-                new_ckpt[key[len('module.'):]] = new_ckpt.pop(key)
-    elif multi_gpu:
-        for key, value in ckpt['dec'].items():                
-            if 'module.' not in key:
-                new_ckpt['module.'+key] = new_ckpt.pop(key)
-    decoder.load_state_dict(new_ckpt, strict=strict)
-
-    # evaluate on test set
-    decoder.eval()
-    gt_list = list()
-    pred_list = list()
-    prob_list = list()
-    with torch.no_grad():
-        for bidx, data in tqdm.tqdm(enumerate(test_loader)):
-            data['image'] = data['image'].cuda()
-            gt = data['gt'].cuda()
-            score = decoder(data['image'])
-            for i in range(score.shape[0]):
-                prob_list.append(score[i].cpu().numpy())
-                pred_list.append(torch.argmax(score,dim=1)[i].cpu().numpy())
-                gt_list.append(gt[i].cpu().numpy())
-    
-    gt_list = np.array(gt_list).reshape(-1)
-    pred_list = np.array(pred_list).reshape(-1)
-    prob_list = np.array(prob_list).reshape(-1, 2)    
-    np.save(os.path.join(cfg.data.output_path, "pair_probability_list.npy"), {'pred': pred_list, 'gt': gt_list, 'prob': prob_list})
-    print("Test done.")
-
-
 def main_worker(gpu, ngpus_per_node, cfg, args): 
-    os.makedirs(args.output_path, exist_ok=True)      
-    
-    # colmap feature extraction and matching
-    if not args.skip_feature_matching or args.database_path is None:
-        print("colmap feature extraction and matching")
-        args.database_path = os.path.join(args.output_path, 'database.db')
-        colmap_runner(args)
+    try:
+        os.makedirs(args.output_path, exist_ok=True)      
 
-    # extracting loftr matches
-    print("Extracting loftr matches")
-    loftr_matches_path = os.path.join(args.output_path, 'loftr_match')
-    os.makedirs(loftr_matches_path, exist_ok=True)
-    pair_path = create_image_pair_list(args.database_path, args.output_path)
-    save_loftr_matches(args.input_image_path, pair_path, args.output_path, cfg)
+        # colmap feature extraction and matching
+        if not args.skip_feature_matching or args.database_path is None:
+            print("colmap feature extraction and matching")
+            args.database_path = os.path.join(args.output_path, 'database.db')
+            colmap_runner(args)
 
-    # edit config file with corresponding data path
-    cfg.data.image_dir = args.input_image_path
-    cfg.data.loftr_match_dir = loftr_matches_path
-    cfg.data.test.pair_path = pair_path
-    cfg.data.output_path = args.output_path    
-    save_update_config(cfg, args)    
-    
-    # Running Doppelgangers classifier model on image pairs
-    print("Running Doppelgangers classifier model on image pairs")
-    doppelgangers_classifier(gpu, ngpus_per_node, cfg, args)
+        # extracting loftr matches
+        print("Extracting loftr matches...")
+        loftr_matches_path = os.path.join(args.output_path, 'loftr_match')
+        os.makedirs(loftr_matches_path, exist_ok=True)
+        pair_path = create_image_pair_list(args.database_path, args.output_path)
+        command = ['python', 'doppelgangers/loftr_matches.py',
+            '--config_path', args.config, 
+            '--data_path', args.input_image_path,
+            '--pair_path', pair_path,
+            '--output_path', args.output_path,
+            '--model_weight_path', 'weights/outdoor_ds.ckpt'
+            ]
+        os.system(' '.join(command))
 
-    # remove all the pairs with a probability lower than the threshold  
-    print("remove all the pairs with a probability lower than the threshold in database")  
-    pair_probability_file = os.path.join(args.output_path, "pair_probability_list.npy")
-    update_database_path = remove_doppelgangers(args.database_path, pair_probability_file, pair_path, args.threshold)
+        # edit config file with corresponding data path
+        cfg.data.image_dir = args.input_image_path
+        cfg.data.loftr_match_dir = loftr_matches_path
+        cfg.data.test.pair_path = pair_path
+        cfg.data.output_path = args.output_path    
+        save_update_config(cfg, args)    
+        
+        # Running Doppelgangers classifier model on image pairs
+        print("Running Doppelgangers classifier model on image pairs...")
+        # doppelgangers_classifier(gpu, ngpus_per_node, cfg, args)
+        command = ['python', 'doppelgangers/doppelgangers_classifier.py',
+            '--config_path', os.path.join(args.output_path, 'config.yaml'), 
+            '--model_weight_path', 'weights/doppelgangers_classifier_loftr.pt'
+            ]
+        os.system(' '.join(command))
 
-    # colmap reconstruction with doppelgangers classifier  
-    print("colmap reconstruction with doppelgangers classifier")  
-    doppelgangers_result_path = os.path.join(args.output_path, 'sparse_doppelgangers_%.3f'%args.threshold)    
-    os.makedirs(doppelgangers_result_path, exist_ok=True)       
-    command = [args.colmap_exe_command, 'mapper',
-           '--database_path', update_database_path,
-           '--image_path', args.input_image_path,
-           '--output_path', doppelgangers_result_path
-          ]
-    os.system(' '.join(command)) 
+        # remove all the pairs with a probability lower than the threshold  
+        print(f"Removing all the pairs with a probability lower than the threshold ({args.threshold}) in database...")  
+        pair_probability_file = os.path.join(args.output_path, "pair_probability_list.npy")
+        update_database_path = remove_doppelgangers(args.database_path, pair_probability_file, pair_path, args.threshold)
 
-    # colmap reconstruction 
-    if not args.skip_reconstruction:
-        print("colmap reconstruction w/o doppelgangers classifier")  
-        colmap_result_path = os.path.join(args.output_path, 'sparse')
-        os.makedirs(colmap_result_path, exist_ok=True)
+        # colmap reconstruction with doppelgangers classifier  
+        print("colmap reconstruction with doppelgangers classifier")  
+        doppelgangers_result_path = os.path.join(args.output_path, 'sparse_doppelgangers_%.3f'%args.threshold)    
+        os.makedirs(doppelgangers_result_path, exist_ok=True)       
         command = [args.colmap_exe_command, 'mapper',
-                '--database_path', args.database_path,
-                '--image_path', args.input_image_path,
-                '--output_path', colmap_result_path
-                ]
+            '--database_path', update_database_path,
+            '--image_path', args.input_image_path,
+            '--output_path', doppelgangers_result_path
+            ]
         os.system(' '.join(command)) 
+
+        # colmap reconstruction 
+        if not args.skip_reconstruction:
+            print("colmap reconstruction w/o doppelgangers classifier")  
+            colmap_result_path = os.path.join(args.output_path, 'sparse')
+            os.makedirs(colmap_result_path, exist_ok=True)
+            command = [args.colmap_exe_command, 'mapper',
+                    '--database_path', args.database_path,
+                    '--image_path', args.input_image_path,
+                    '--output_path', colmap_result_path
+                    ]
+            os.system(' '.join(command)) 
+    
+    except KeyboardInterrupt:
+        print("Ctrl+C pressed! Exiting!")
+        exit(1)
+    except Exception as e:
+        print("Error: ", e)
 
 
 def main():

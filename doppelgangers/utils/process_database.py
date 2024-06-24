@@ -47,11 +47,11 @@ def deleteMultipleRecords(database_path, match_pair_list, table="two_view_geomet
         sqlite_update_query = """DELETE from %s where pair_id = ?""" % table
         cursor.executemany(sqlite_update_query, match_pair_list)
         db.commit()
-        print("Total", cursor.rowcount, "Records deleted successfully")
+        print(f"Total: {cursor.rowcount} records deleted successfully from table \"{table}\"!")
         cursor.close()
 
     except sqlite3.Error as error:
-        print("Failed to delete multiple records from sqlite table", error)
+        print(f"Failed to delete multiple records from sqlite table {table}: ", error)
     finally:
         if db:
             db.close()
@@ -83,12 +83,13 @@ def remove_doppelgangers(db_path, pair_probability_file, pair_path, threshold):
     pairs_info = np.load(pair_path)
     pairs_id = np.array(pairs_info)[:, -1]
 
-    print('number of matches in database: ', len(y_scores))
+    print(f"Number of matches in database: {len(y_scores)}")
 
     match_pair_list = []
     for i in range(len(pairs_id)):
         if y_scores[i] < threshold:
-                match_pair_list.append(pairs_id[i])   
+                match_pair_list.append(pairs_id[i])
+
     deleteMultipleRecords(new_db_path, match_pair_list, table="matches")
     deleteMultipleRecords(new_db_path, match_pair_list, table="two_view_geometries")
     return new_db_path
