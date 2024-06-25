@@ -2,11 +2,7 @@ import os
 import yaml
 import torch
 import argparse
-import importlib
 import torch.distributed
-from torch.backends import cudnn
-import tqdm
-import numpy as np
 
 from doppelgangers.utils.process_database import create_image_pair_list, remove_doppelgangers
 from doppelgangers.utils.process_database import remove_doppelgangers
@@ -46,10 +42,13 @@ def get_args():
     parser.add_argument('--gpu', default=None, type=int,
                         help='GPU id to use. None means using all '
                              'available GPUs.')
+    
+    parser.add_argument('--skip_reconstruction', default=False, action='store_true',
+                        help="skip colmap reconstruction w/o doppelgangers classifier")
 
-    # Resume:
-    parser.add_argument('--pretrained', default='weights/doppelgangers_classifier_loftr.pt', type=str,
-                        help="Pretrained cehckpoint")
+    parser.add_argument('--hierarquical', default=False, action='store_true', 
+                        help="Whether to use hierarchical mapper")
+    
     args = parser.parse_args()
 
     def dict2namespace(config):
@@ -156,10 +155,11 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
         update_database_path = remove_doppelgangers(args.database_path, pair_probability_file, pair_path, args.threshold)
 
         # colmap reconstruction with doppelgangers classifier  
-        print("colmap reconstruction with doppelgangers classifier")  
+        print("colmap reconstruction with doppelgangers classifier")
+        mapper_type = 'hierarchical_mapper' if args.hierarquical else 'mapper'
         doppelgangers_result_path = os.path.join(args.output_path, 'sparse_doppelgangers_%.3f'%args.threshold)    
         os.makedirs(doppelgangers_result_path, exist_ok=True)       
-        command = [args.colmap_exe_command, 'mapper',
+        command = [args.colmap_exe_command, mapper_type,
             '--database_path', update_database_path,
             '--image_path', args.input_image_path,
             '--output_path', doppelgangers_result_path
@@ -171,7 +171,7 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
             print("colmap reconstruction w/o doppelgangers classifier")  
             colmap_result_path = os.path.join(args.output_path, 'sparse')
             os.makedirs(colmap_result_path, exist_ok=True)
-            command = [args.colmap_exe_command, 'mapper',
+            command = [args.colmap_exe_command, mapper_type,
                     '--database_path', args.database_path,
                     '--image_path', args.input_image_path,
                     '--output_path', colmap_result_path
