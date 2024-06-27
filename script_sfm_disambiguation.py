@@ -43,9 +43,6 @@ def get_args():
                         help='GPU id to use. None means using all '
                              'available GPUs.')
     
-    parser.add_argument('--skip_reconstruction', default=False, action='store_true',
-                        help="skip colmap reconstruction w/o doppelgangers classifier")
-
     parser.add_argument('--hierarquical', default=False, action='store_true', 
                         help="Whether to use hierarchical mapper")
     
