@@ -45,6 +45,8 @@ def get_args():
     
     parser.add_argument('--hierarquical', default=False, action='store_true', 
                         help="Whether to use hierarchical mapper")
+    parser.add_argument('--pretrained', default='weights/doppelgangers_classifier_loftr.pt', type=str,
+                        help="Pretrained cehckpoint")
     
     args = parser.parse_args()
 
@@ -142,8 +144,8 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
         # doppelgangers_classifier(gpu, ngpus_per_node, cfg, args)
         command = ['python', 'doppelgangers/doppelgangers_classifier.py',
             '--config_path', os.path.join(args.output_path, 'config.yaml'), 
-            '--model_weight_path', 'weights/doppelgangers_classifier_loftr.pt'
-            ]
+            '--model_weight_path', args.pretrained
+        ]
         os.system(' '.join(command))
 
         # remove all the pairs with a probability lower than the threshold  
