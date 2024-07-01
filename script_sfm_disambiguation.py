@@ -123,7 +123,7 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
         loftr_matches_path = os.path.join(args.output_path, 'loftr_match')
         os.makedirs(loftr_matches_path, exist_ok=True)
         pair_path = create_image_pair_list(args.database_path, args.output_path)
-        command = ['python', 'doppelgangers/loftr_matches.py',
+        command = ['python3', 'doppelgangers/loftr_matches.py',
             '--config_path', args.config, 
             '--data_path', args.input_image_path,
             '--pair_path', pair_path,
@@ -142,7 +142,7 @@ def main_worker(gpu, ngpus_per_node, cfg, args):
         # Running Doppelgangers classifier model on image pairs
         print("Running Doppelgangers classifier model on image pairs...")
         # doppelgangers_classifier(gpu, ngpus_per_node, cfg, args)
-        command = ['python', 'doppelgangers/doppelgangers_classifier.py',
+        command = ['python3', 'doppelgangers/doppelgangers_classifier.py',
             '--config_path', os.path.join(args.output_path, 'config.yaml'), 
             '--model_weight_path', args.pretrained
         ]
